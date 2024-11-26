@@ -1,4 +1,5 @@
 *ipynb_checkpo*
+*__pycache__*
 data
 checkpoints
 models
