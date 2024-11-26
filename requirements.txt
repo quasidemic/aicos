@@ -1,0 +1,16 @@
+scikit-learn
+numpy
+datasets
+transformers==4.39.0 # setfit expects older version of transformers
+setfit
+datasets
+matplotlib
+torch --index-url https://download.pytorch.org/whl/cu118 # cuda version of pytorch
+pysbd
+optuna
+huggingface_hub==0.23.5
+pandas
+pdfminer.six
+openpyxl
+tqdm
+spacy
