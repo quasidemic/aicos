@@ -56,13 +56,13 @@ negdf = pd.read_csv(negatives_p)
 
 ## DATA HANDLING
 cols_keep = ['Study ID', 'Verbatim Outcomes', 'Outcome Domains']
-has_results_filter = mapdf['has results'] == True
-mapdf_model = mapdf.loc[has_results_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
+has_results_filter_outcome = mapdf['has results'] == True
+mapdf_model = mapdf.loc[has_results_filter_outcome, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
 mapdf_model['label'] = "outcome"
 
 ### rename negatives df columns
-has_results_filter = negdf['has results'] == True
-negdf_model = negdf.loc[has_results_filter,].rename(columns={"non outcome": "text"})
+has_results_filter_negs = negdf['has results'] == True
+negdf_model = negdf.loc[has_results_filter_negs,].rename(columns={"non outcome": "text"})
 negdf_model['label'] = "not outcome"
 negdf_model = negdf_model[['Study ID', 'text', 'label']]
 
@@ -221,7 +221,7 @@ modeloutp = join(models_dir, 'binary_model_nov24')
 model.save_pretrained(modeloutp)
 
 ## PREDICTIONS
-predict_df = mapdf.loc[has_results_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
+predict_df = mapdf.loc[has_results_filter_outcome, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
 n_outcomes_predict = predict_df.shape[0]
 
 negdf_predicts = negdf_model.sample(n = n_outcomes_predict, replace=False, random_state = seed_no, ignore_index = True)
