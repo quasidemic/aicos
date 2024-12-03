@@ -101,15 +101,15 @@ labels = model_data['label'].unique().tolist()
 ### device
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-### parameters from HPO
+### parameters
 params = {
     'head_params': {
         'solver': 'liblinear',
-        'max_iter': 100
+        'max_iter': 200
     },
     'batch_size': 64,
-    'num_epochs': 3,
-    'body_learning_rate': 1.04e-05
+    'num_epochs': 2,
+    'body_learning_rate': 1.5e-05
     }
 
 
@@ -174,7 +174,7 @@ with open(out_path, 'w') as f:
     json.dump(report, f)
 
 # Save model
-modeloutp = join(models_dir, 'od_model')
+modeloutp = join(models_dir, 'od_model_nov24')
 model.save_pretrained(modeloutp)
 
 ## PREDICTIONS

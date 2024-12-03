@@ -69,7 +69,7 @@ pdfs_outc_preds_df = pdfs_outc_preds_df[['article_id', 'verbatim_outcome', 'sent
 
 # export
 print('exporting...')
-out_p = join(output_dir, 'extracted_outcomes_20241129.csv')
+out_p = join(output_dir, 'extracted_outcomes_20241203.csv')
 pdfs_outc_preds_df.to_csv(out_p, index = False)
 
 print('Done!')

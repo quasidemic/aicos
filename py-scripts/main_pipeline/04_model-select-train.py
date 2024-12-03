@@ -52,7 +52,7 @@ p = (
     ggplot(plot_df, aes("n_articles", "score", color = "metric"))
     + geom_line()
     + scale_x_continuous(breaks = list(range(5,105,5)))
-    + scale_y_continuous(breaks = list(np.arange(0.0, 1.05, 0.05)))
+    + scale_y_continuous(limits = [0.8, 1.0], breaks = list(np.arange(0.0, 1.05, 0.05)))
     + theme_minimal()
     )
 
@@ -60,5 +60,5 @@ p = (
 p.save(filename=join(plot_dir, 'bin-model_n-art_plot.png'), width=12, height=10, dpi=300)
 model_metrics_df.to_csv(join(output_dir, 'metrics_binary-model_n-art.csv'), index = False)
 
-## Conclusion: Use 30 based on recall
+## Conclusion: Use 20 articles based on precision/recall going above 90%
 

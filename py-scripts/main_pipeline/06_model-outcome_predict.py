@@ -139,20 +139,20 @@ labels = ['outcome', 'not outcome']
 ### device
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-### parameters from HPO
+### parameters
 params = {
     'head_params': {
         'solver': 'liblinear',
-        'max_iter': 100
+        'max_iter': 200
     },
     'batch_size': 64,
-    'num_epochs': 3,
-    'body_learning_rate': 1.04e-05
+    'num_epochs': 2,
+    'body_learning_rate': 1.5e-05
     }
 
 
 ## SET TRAIN AND EVAL DATA 
-n = 30 # use 30 based on 03_model-select-train
+n = 20 # use 20 based on 04_model-select-train
 ids_use, train_data, eval_data = set_train_eval(n, seed_no)
 
 
@@ -221,8 +221,12 @@ modeloutp = join(models_dir, 'binary_model_nov24')
 model.save_pretrained(modeloutp)
 
 ## PREDICTIONS
-predict_df = mapdf.loc[not_case_report_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
-predict_df = pd.concat([predict_df, negdf], axis=0).reset_index(drop = True)
+predict_df = mapdf.loc[has_results_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
+n_outcomes_predict = predict_df.shape[0]
+
+negdf_predicts = negdf_model.sample(n = n_outcomes_predict, replace=False, random_state = seed_no, ignore_index = True)
+
+predict_df = pd.concat([predict_df, negdf_predicts], axis=0).reset_index(drop = True)
 predict_df['used_in_training'] = predict_df['Study ID'].isin(ids_use)
 
 # predict

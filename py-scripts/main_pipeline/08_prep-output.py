@@ -15,7 +15,7 @@ plot_dir = join(project_dir, 'plots')
 
 ## READ 
 cv_mets_p = join(output_dir, 'cross-val_binary_model_nov24.json')
-od_mets_p = join(output_dir, 'rreport_outcome-domain-model_final_nov24.json')
+od_mets_p = join(output_dir, 'report_outcome-domain-model_final_nov24.json')
 bm_mets_p = join(output_dir, 'report_binary-model_final_nov24.json')
 
 ## CV

@@ -26,8 +26,8 @@ os.makedirs(plot_dir, exist_ok=True)
 os.makedirs(output_dir, exist_ok=True)
 
 # Models
-outcome_model_p = join(models_dir, 'binary_model')
-od_model_p = join(models_dir, 'od_model')
+outcome_model_p = join(models_dir, 'binary_model_nov24')
+od_model_p = join(models_dir, 'od_model_nov24')
 
 ## LOAD MODELS
 outcome_model = SetFitModel.from_pretrained(outcome_model_p)
