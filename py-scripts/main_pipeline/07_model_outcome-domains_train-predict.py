@@ -24,7 +24,7 @@ sys.path.append(modules_p)
 
 ## LOGGING SETUP
 logging.basicConfig(
-    filename=join(logs_dir, 'predict_outcome-domains_20241030.log'),  # Log file name
+    filename=join(logs_dir, 'predict_outcome-domains_nov24.log'),  # Log file name
     filemode='w',        # Write mode
     format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
     datefmt='%Y-%m-%d %H:%M:%S',
@@ -44,7 +44,7 @@ os.makedirs(plot_dir, exist_ok=True)
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(models_dir, exist_ok=True)
 
-predictdata_p = join(output_dir, 'outcome-notoutcome_predictions.csv')
+predictdata_p = join(output_dir, 'outcome-notoutcome_predictions_nov24.csv')
 
 ## READ MAPPINGS WITH PREDICTIONS
 predict_df = pd.read_csv(predictdata_p) # predictions
@@ -168,7 +168,7 @@ report['TN'] = TN.tolist()
 logger.warning(f"Model for outcome domains fit with {n_articles} articles achieves model with following macro avg: {report.get('macro avg')}")
 
 # Write to file
-out_path = join(output_dir, "report_outcome-domain-model_final.json")
+out_path = join(output_dir, "report_outcome-domain-model_final_nov24.json")
 
 with open(out_path, 'w') as f:
     json.dump(report, f)
@@ -187,5 +187,5 @@ pred_outcomes_df['predicted_od'] = model.predict(list(pred_outcomes_df['text']))
 predict_combined_df = pd.merge(predict_df, pred_outcomes_df[['predicted_od']], how='left', left_index=True, right_index=True)
 
 # write to file
-predict_outp = join(output_dir, 'outcome-domains_predictions.csv')
+predict_outp = join(output_dir, 'outcome-domains_predictions_nov24.csv')
 predict_combined_df.to_csv(predict_outp, index = False)

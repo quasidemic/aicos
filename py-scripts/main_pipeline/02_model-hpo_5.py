@@ -12,6 +12,7 @@ from datasets import Dataset
 import random
 from random import sample
 from optuna import Trial
+from optuna.samplers import TPESampler
 import torch
 import logging
 
@@ -26,7 +27,7 @@ from modelling import *
 
 ## LOGGING SETUP
 logging.basicConfig(
-    filename=join(logs_dir, 'hpo_binary-model.log'),  # Log file name
+    filename=join(logs_dir, 'hpo_binary-model_nov24_5.log'),  # Log file name
     filemode='w',        # Write mode
     format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
     datefmt='%Y-%m-%d %H:%M:%S',
@@ -45,8 +46,9 @@ os.makedirs(plot_dir, exist_ok=True)
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(models_dir, exist_ok=True)
 
-mapdata_p = join(data_dir, 'articles_text_outcomes.csv')
-negatives_p = join(data_dir, 'negatives.csv')
+mapdata_p = join(data_dir, 'articles_outcomes_nov24.csv')
+#negatives_p = join(data_dir, 'negatives.csv')
+negatives_p = join(data_dir, 'article_negatives_nps.csv')
 
 ## READ MAPPINGS
 mapdf = pd.read_csv(mapdata_p) # mappings
@@ -56,13 +58,15 @@ negdf = pd.read_csv(negatives_p)
 
 ## DATA HANDLING
 cols_keep = ['Study ID', 'Verbatim Outcomes', 'Outcome Domains']
-not_case_report_filter = mapdf['is_case_report'] == 0
-mapdf_model = mapdf.loc[not_case_report_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
+has_results_filter = mapdf['has results'] == True
+mapdf_model = mapdf.loc[has_results_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
 mapdf_model['label'] = "outcome"
 
 ### rename negatives df columns
-negdf = negdf.rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
-negdf['label'] = "not outcome"
+has_results_filter = negdf['has results'] == True
+negdf_model = negdf.loc[has_results_filter,].rename(columns={"non outcome": "text"})
+negdf_model['label'] = "not outcome"
+negdf_model = negdf_model[['Study ID', 'text', 'label']]
 
 ## IDS FOR MODELLING
 studyids = mapdf_model['Study ID'].unique().tolist()
@@ -70,23 +74,29 @@ studyids = mapdf_model['Study ID'].unique().tolist()
 ## SEED USED FOR SAMPLING TRAINING, EVAL, TEST
 seed_no = 4220
 
-## ADD NEGATIVES
-model_data = pd.concat([mapdf_model, negdf], axis=0).reset_index(drop = True)
-
 ## SET FIXED TEST SET
 random.seed(seed_no)
 
 test_size = 0.25
 test_ids = sample(studyids, round(test_size * len(studyids)))
 
-test_df = model_data.loc[model_data['Study ID'].isin(test_ids), ].drop(columns = ['Study ID'])
+# outcomes
+test_df_outcome = mapdf_model.loc[mapdf_model['Study ID'].isin(test_ids), ].drop(columns = ['Study ID']) 
+n_outcomes = test_df_outcome.shape[0]
+
+# non outcomes
+test_df_nonoutcome = negdf_model.loc[negdf_model['Study ID'].isin(test_ids), ].drop(columns = ['Study ID']) 
+test_df_nonoutcome = test_df_nonoutcome.sample(n = n_outcomes, replace=False, random_state = seed_no, ignore_index = True)
+
+test_df = pd.concat([test_df_outcome, test_df_nonoutcome], axis=0).reset_index(drop = True) # concatenate
 test_data = Dataset.from_pandas(test_df, preserve_index = False)
+
 
 ## REMAINING IDS
 train_eval_ids = [id for id in studyids if id not in test_ids]
 
 ## FUNCTION FOR TRAINING, EVAL DATA BASED ON N ARTICLES
-def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, df_use = model_data):
+def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, outcome_data = mapdf_model, nonoutcome_data = negdf_model):
 
     # set seed
     random.seed(seed)
@@ -99,9 +109,23 @@ def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, df
     eval_ids = list(set(ids_use) - set(train_ids))
 
     # set train, eval data based on ids
-    train_df = df_use.loc[df_use['Study ID'].isin(train_ids), ].drop(columns = ['Study ID'])
-    eval_df = df_use.loc[df_use['Study ID'].isin(eval_ids), ].drop(columns = ['Study ID'])
-    
+    # outcomes
+    train_outcome_df = outcome_data.loc[outcome_data['Study ID'].isin(train_ids), ].drop(columns = ['Study ID'])
+    n_train_outcomes = train_outcome_df.shape[0]
+    eval_outcome_df = outcome_data.loc[outcome_data['Study ID'].isin(eval_ids), ].drop(columns = ['Study ID'])
+    n_eval_outcomes = eval_outcome_df.shape[0]
+
+    # non outcomes
+    train_nonoutcome_df = nonoutcome_data.loc[nonoutcome_data['Study ID'].isin(train_ids), ].drop(columns = ['Study ID'])
+    train_nonoutcome_df = train_nonoutcome_df.sample(n = n_train_outcomes, replace=False, random_state = seed, ignore_index = True)
+
+    eval_nonoutcome_df = nonoutcome_data.loc[nonoutcome_data['Study ID'].isin(eval_ids), ].drop(columns = ['Study ID'])
+    eval_nonoutcome_df = eval_nonoutcome_df.sample(n = n_eval_outcomes, replace=False, random_state = seed, ignore_index = True)
+
+    # concatenate
+    train_df = pd.concat([train_outcome_df, train_nonoutcome_df], axis=0).reset_index(drop = True) # concatenate
+    eval_df = pd.concat([eval_outcome_df, eval_nonoutcome_df], axis=0).reset_index(drop = True)
+
     # convert to transformers dataset
     train_data = Dataset.from_pandas(train_df, preserve_index = False)
     eval_data = Dataset.from_pandas(eval_df, preserve_index = False)
@@ -109,7 +133,7 @@ def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, df
     return train_data, eval_data
 
 ## SET TRAIN AND EVAL DATA
-train_data, eval_data = set_train_eval(25, seed_no, eval_prop = 0)
+train_data, eval_data = set_train_eval(15, seed_no, eval_prop = 0)
 
 ## MODEL AND LABELS
 ### model
@@ -161,9 +185,17 @@ trainer = Trainer(
 )
 
 # Run HP opt
-best_run = trainer.hyperparameter_search(direction="maximize", hp_space=hp_space, n_trials=50)
+best_run = trainer.hyperparameter_search(direction="maximize", hp_space=hp_space, n_trials=10, sampler=TPESampler(seed=5555))
+
+# store trials
+trials_out = join(output_dir, 'hpo_trials-5.txt')
 
 for trial in best_run.backend.trials:
-    logger.warning(f"Trial {trial.number} | Objective value: {trial.value} | Hyperparameters: {trial.params}")
+    trial_string = f"Trial {trial.number} | Objective value: {trial.value} | Hyperparameters: {trial.params}"
+    logger.warning(trial_string)
 
+    with open(trials_out, 'a') as f:
+        f.write(trial_string + '\n')
+        f.close()
+    
 logger.warning(best_run)

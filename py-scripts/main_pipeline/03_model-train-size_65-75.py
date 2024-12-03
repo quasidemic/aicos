@@ -5,25 +5,30 @@ import sys
 import os
 from os.path import join
 import pandas as pd
-import json
-from setfit import SetFitModel, Trainer, TrainingArguments
-from datasets import Dataset
+import re
 import random
-from random import sample
-from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
-import torch
+from random import sample, shuffle
 import logging
 import numpy as np
+from setfit import SetFitModel, Trainer, TrainingArguments
+from datasets import Dataset
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import classification_report, confusion_matrix
+import torch
+import json
 
 project_dir = join('/work', 'aicos')
 modules_p = join(project_dir, 'modules')
 logs_dir = join(project_dir, 'logs')
 os.makedirs(logs_dir, exist_ok=True)
 
+sys.path.append(modules_p)
+
+from modelling import *
+
 ## LOGGING SETUP
 logging.basicConfig(
-    filename=join(logs_dir, 'crossval_binary_nov24.log'),  # Log file name
+    filename=join(logs_dir, 'eval_train_size_binary_nov24-4.log'),  # Log file name
     filemode='w',        # Write mode
     format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
     datefmt='%Y-%m-%d %H:%M:%S',
@@ -31,6 +36,7 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger()
+
 
 ## DIRS AND PATHS
 data_dir = join(project_dir, 'data')
@@ -87,28 +93,45 @@ test_df_nonoutcome = test_df_nonoutcome.sample(n = n_outcomes, replace=False, ra
 test_df = pd.concat([test_df_outcome, test_df_nonoutcome], axis=0).reset_index(drop = True) # concatenate
 test_data = Dataset.from_pandas(test_df, preserve_index = False)
 
-
 ## REMAINING IDS
 train_eval_ids = [id for id in studyids if id not in test_ids]
 
-## TRAIN, EVAL DATA
-n = 30 # using 30 articles based on 03_model-select-train
+## FUNCTION FOR TRAINING, EVAL DATA BASED ON N ARTICLES
+def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, outcome_data = mapdf_model, nonoutcome_data = negdf_model):
 
-# split ids
-ids_use = train_eval_ids[:n]
+    # set seed
+    random.seed(seed)
+    
+    # split ids
+    ids_use = sample(train_eval_ids, n)
 
-# outcomes
-crossval_outcome_df = mapdf_model.loc[mapdf_model['Study ID'].isin(ids_use), :]
-crossval_n_outcomes = crossval_outcome_df.shape[0]
+    train_prop = 1 - eval_prop
+    train_ids = sample(ids_use, round(train_prop * len(ids_use)))
+    eval_ids = list(set(ids_use) - set(train_ids))
 
-# non outcomes
-crossval_nonoutcome_df = negdf_model.loc[negdf_model['Study ID'].isin(ids_use), :]
-crossval_nonoutcome_df = crossval_nonoutcome_df.sample(n = crossval_n_outcomes, replace=False, random_state = seed_no, ignore_index = True)
+    # set train, eval data based on ids
+    # outcomes
+    train_outcome_df = outcome_data.loc[outcome_data['Study ID'].isin(train_ids), ].drop(columns = ['Study ID'])
+    n_train_outcomes = train_outcome_df.shape[0]
+    eval_outcome_df = outcome_data.loc[outcome_data['Study ID'].isin(eval_ids), ].drop(columns = ['Study ID'])
+    n_eval_outcomes = eval_outcome_df.shape[0]
 
-crossval_df = pd.concat([crossval_outcome_df, crossval_nonoutcome_df], axis=0).reset_index(drop = True) # concatenate
+    # non outcomes
+    train_nonoutcome_df = nonoutcome_data.loc[nonoutcome_data['Study ID'].isin(train_ids), ].drop(columns = ['Study ID'])
+    train_nonoutcome_df = train_nonoutcome_df.sample(n = n_train_outcomes, replace=False, random_state = seed, ignore_index = True)
 
-texts_crossval = crossval_df['text'].tolist()
-labels_crossval = crossval_df['label'].tolist()
+    eval_nonoutcome_df = nonoutcome_data.loc[nonoutcome_data['Study ID'].isin(eval_ids), ].drop(columns = ['Study ID'])
+    eval_nonoutcome_df = eval_nonoutcome_df.sample(n = n_eval_outcomes, replace=False, random_state = seed, ignore_index = True)
+
+    # concatenate
+    train_df = pd.concat([train_outcome_df, train_nonoutcome_df], axis=0).reset_index(drop = True) # concatenate
+    eval_df = pd.concat([eval_outcome_df, eval_nonoutcome_df], axis=0).reset_index(drop = True)
+
+    # convert to transformers dataset
+    train_data = Dataset.from_pandas(train_df, preserve_index = False)
+    eval_data = Dataset.from_pandas(eval_df, preserve_index = False)
+
+    return train_data, eval_data
 
 
 ## MODEL, LABELS AND HYPERPARAMETERS
@@ -119,55 +142,31 @@ labels = ['outcome', 'not outcome']
 ### device
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-### parameters from HPO
+### parameters
 params = {
     'head_params': {
         'solver': 'liblinear',
-        'max_iter': 100
+        'max_iter': 200
     },
     'batch_size': 64,
-    'num_epochs': 3,
-    'body_learning_rate': 1.04e-05
+    'num_epochs': 2,
+    'body_learning_rate': 1.5e-05
     }
 
-### Function to compute additional metrics
-def compute_metrics(y_pred, y_test):
-    accuracy = accuracy_score(y_test, y_pred)
-    precision, recall, f1, _ = precision_recall_fscore_support(y_test, y_pred, average='binary')
-    return {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
-    }
+## FUNCTION FOR MODELLING BASED ON N ARTICLES
+def fit_model(n, seed, labels, model_name = model_name, params = params, device = device, test_data = test_data, logger = logger):
 
-## CROSS-VAL SETUP
-logging.warning('Starting cross-validation...')
+    logger.warning(f"Fitting model using {n} articles...")
 
-n_splits = 5 # n folds
-kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed_no)
+    # Set train and eval data
+    train_data, eval_data = set_train_eval(n, seed)
 
-## Run cross-val
-for fold, (train_index, val_index) in enumerate(kf.split(texts_crossval, labels_crossval), start = 1):
-    print(f"Fold {fold}/{n_splits}")
-    
-    # Split fold into training and validation
-    train_texts = [texts_crossval[i] for i in train_index]
-    train_labels = [labels_crossval[i] for i in train_index]
-    val_texts = [texts_crossval[i] for i in val_index]
-    val_labels = [labels_crossval[i] for i in val_index]
-    
-    # Convert to Dataset
-    fold_train_data = Dataset.from_dict({'text': train_texts, 'label': train_labels})
-    fold_val_data = Dataset.from_dict({'text': val_texts, 'label': val_labels})
-    
-    # Load model with each fold
+    # Load SetFit model from Hub
     model = SetFitModel.from_pretrained(
         model_name,
         head_params = params.get('head_params'),
         labels = labels
         ).to(device)
-    
 
     # Setfit Training arguments
     args = TrainingArguments(
@@ -179,31 +178,44 @@ for fold, (train_index, val_index) in enumerate(kf.split(texts_crossval, labels_
         load_best_model_at_end=True,
         show_progress_bar=False
     )
-    
+
     # Setfit Trainer
     trainer = Trainer(
         model=model,
         args=args,
-        train_dataset=fold_train_data,
-        eval_dataset=fold_val_data,
+        train_dataset=train_data,
+        eval_dataset=eval_data,
         metric="accuracy",
         column_mapping={"text": "text", "label": "label"}  # Map dataset columns to text/label expected by trainer
     )
-    
-    # Train model
+
+    # Train
     trainer.train()
 
     # Evaluate
-    y_true = list(fold_val_data['label'])
-    y_pred = model.predict(list(fold_val_data['text']))
+    y_true = list(test_data['label'])
+    y_pred = model.predict(list(test_data['text']))
 
     report = classification_report(y_true, y_pred, output_dict = True, zero_division = 0)
+    cm = confusion_matrix(y_true, y_pred, labels = labels)
+    
+    FP = cm.sum(axis=0) - np.diag(cm)
+    FN = cm.sum(axis=1) - np.diag(cm)
+    TP = np.diag(cm)
+    TN = (cm.sum() - (FP + FN + TP))
 
-    # Write fold metrics to log
-    logging.warning(f'Metrics for fold {fold}: {report}')
+    report['n_articles'] = n
+    report['seed_no'] = seed
+    report['params'] = params
+    report['FP'] = FP.tolist()
+    report['FN'] = FN.tolist()
+    report['TP'] = TP.tolist()
+    report['TN'] = TN.tolist()
 
-    # Write report to file
-    out_path = join(output_dir, "cross-val_binary_model_nov24.json")
+    logger.warning(f"Model fit with {n} articles achieves model with following macro avg: {report.get('macro avg')}")
+
+    # Write to file
+    out_path = join(output_dir, "n-art_binary_model-eval_class-reps-4.json")
 
     try:
         with open(out_path, 'r') as f:
@@ -218,6 +230,10 @@ for fold, (train_index, val_index) in enumerate(kf.split(texts_crossval, labels_
     with open(out_path, 'w') as f:
         json.dump(reports, f)
 
-# Avg. metrics
-avg_metrics = {metric: np.mean([m.get('macro avg')[metric] for m in reports]) for metric in ['precision', 'recall']}
-logging.warning(f"Average metrics across {n_splits} folds: {avg_metrics}")
+    return model
+
+## FITTING MODELS
+train_sizes = list(range(65,80,5)) # train size set as number of articles
+
+for n_articles in train_sizes:
+    fit_model(n_articles, seed_no, labels = labels)

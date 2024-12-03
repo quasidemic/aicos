@@ -65,11 +65,11 @@ pdfs_outc_preds_df = pd.DataFrame.from_records(processed_pdfs)
 # rename columns
 pdfs_outc_preds_df = pdfs_outc_preds_df.rename(columns={'text': 'verbatim_outcome', 'prob': 'is_outcome_probability'})
 pdfs_outc_preds_df['article_id'] = pdfs_outc_preds_df['filename'].str.replace('.pdf', '')
-pdfs_outc_preds_df = pdfs_outc_preds_df[['article_id', 'verbatim_outcome', 'outcome_domain', 'is_outcome_probability']]
+pdfs_outc_preds_df = pdfs_outc_preds_df[['article_id', 'verbatim_outcome', 'sentence context', 'outcome_domain', 'is_outcome_probability']]
 
 # export
 print('exporting...')
-out_p = join(output_dir, 'extracted_outcomes.csv')
+out_p = join(output_dir, 'extracted_outcomes_20241129.csv')
 pdfs_outc_preds_df.to_csv(out_p, index = False)
 
 print('Done!')

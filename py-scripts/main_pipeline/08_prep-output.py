@@ -14,9 +14,9 @@ output_dir = join(project_dir, 'output')
 plot_dir = join(project_dir, 'plots')
 
 ## READ 
-cv_mets_p = join(output_dir, 'cross-val_binary_model.json')
-od_mets_p = join(output_dir, 'report_outcome-domain-model_final.json')
-bm_mets_p = join(output_dir, 'report_binary-model_final.json')
+cv_mets_p = join(output_dir, 'cross-val_binary_model_nov24.json')
+od_mets_p = join(output_dir, 'rreport_outcome-domain-model_final_nov24.json')
+bm_mets_p = join(output_dir, 'report_binary-model_final_nov24.json')
 
 ## CV
 with open(cv_mets_p, 'r') as f:
@@ -36,7 +36,7 @@ for k, m in enumerate(cv_metrics, start=1):
 
     model_metrics_df = pd.concat([model_metrics_df, m_select_df])
 
-cv_mets_out = join(output_dir, 'cross-val_bm_metrics.csv')
+cv_mets_out = join(output_dir, 'cross-val_bm_metrics_nov24.csv')
 model_metrics_df.to_csv(cv_mets_out, index=False)
 
 ## BM
@@ -49,7 +49,7 @@ m_select_df = pd.DataFrame.from_dict(m_select, orient = 'columns').reset_index(n
 m_select_df = m_select_df.melt(id_vars='metric', value_vars=['outcome', 'not outcome', 'weighted avg', 'macro avg'], 
                                 var_name='target', value_name='score')
 
-bm_mets_out = join(output_dir, 'bm_metrics.csv')
+bm_mets_out = join(output_dir, 'bm_metrics_nov24.csv')
 m_select_df.to_csv(bm_mets_out, index=False)
 
 ## FP, FN, TP, TN
@@ -61,7 +61,7 @@ conf_mat_outc = pd.DataFrame(
 
 })
 
-conf_mat_out = join(output_dir, 'bm_conf_mat.csv')
+conf_mat_out = join(output_dir, 'bm_conf_mat_nov24.csv')
 conf_mat_outc.to_csv(conf_mat_out, index=False)
 
 ## OD model
@@ -75,5 +75,5 @@ m_select_df = m_select_df.loc[m_select_df['metric'].isin(['precision', 'recall',
 m_select_df = m_select_df.transpose().reset_index().rename(columns = {'index': 'eval', 0: 'precision', 1: 'recall', 2: 'f1-score'})
 m_select_df = m_select_df.iloc[1:, ]
 
-od_mets_out = join(output_dir, 'odm_metrics.csv')
+od_mets_out = join(output_dir, 'odm_metrics_nov24.csv')
 m_select_df.to_csv(od_mets_out, index=False)

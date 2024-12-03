@@ -28,7 +28,7 @@ from modelling import *
 
 ## LOGGING SETUP
 logging.basicConfig(
-    filename=join(logs_dir, 'eval_train_size_binary_20241021-1.log'),  # Log file name
+    filename=join(logs_dir, 'eval_train_size_binary_nov24-2.log'),  # Log file name
     filemode='w',        # Write mode
     format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
     datefmt='%Y-%m-%d %H:%M:%S',
@@ -48,8 +48,9 @@ os.makedirs(plot_dir, exist_ok=True)
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(models_dir, exist_ok=True)
 
-mapdata_p = join(data_dir, 'articles_text_outcomes.csv')
-negatives_p = join(data_dir, 'negatives.csv')
+mapdata_p = join(data_dir, 'articles_outcomes_nov24.csv')
+#negatives_p = join(data_dir, 'negatives.csv')
+negatives_p = join(data_dir, 'article_negatives_nps.csv')
 
 ## READ MAPPINGS
 mapdf = pd.read_csv(mapdata_p) # mappings
@@ -59,13 +60,15 @@ negdf = pd.read_csv(negatives_p)
 
 ## DATA HANDLING
 cols_keep = ['Study ID', 'Verbatim Outcomes', 'Outcome Domains']
-not_case_report_filter = mapdf['is_case_report'] == 0
-mapdf_model = mapdf.loc[not_case_report_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
+has_results_filter = mapdf['has results'] == True
+mapdf_model = mapdf.loc[has_results_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
 mapdf_model['label'] = "outcome"
 
 ### rename negatives df columns
-negdf = negdf.rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
-negdf['label'] = "not outcome"
+has_results_filter = negdf['has results'] == True
+negdf_model = negdf.loc[has_results_filter,].rename(columns={"non outcome": "text"})
+negdf_model['label'] = "not outcome"
+negdf_model = negdf_model[['Study ID', 'text', 'label']]
 
 ## IDS FOR MODELLING
 studyids = mapdf_model['Study ID'].unique().tolist()
@@ -73,40 +76,57 @@ studyids = mapdf_model['Study ID'].unique().tolist()
 ## SEED USED FOR SAMPLING TRAINING, EVAL, TEST
 seed_no = 4220
 
-## ADD NEGATIVES
-model_data = pd.concat([mapdf_model, negdf], axis=0).reset_index(drop = True)
-
 ## SET FIXED TEST SET
 random.seed(seed_no)
 
 test_size = 0.25
 test_ids = sample(studyids, round(test_size * len(studyids)))
 
-test_df = model_data.loc[model_data['Study ID'].isin(test_ids), ].drop(columns = ['Study ID'])
+# outcomes
+test_df_outcome = mapdf_model.loc[mapdf_model['Study ID'].isin(test_ids), ].drop(columns = ['Study ID']) 
+n_outcomes = test_df_outcome.shape[0]
+
+# non outcomes
+test_df_nonoutcome = negdf_model.loc[negdf_model['Study ID'].isin(test_ids), ].drop(columns = ['Study ID']) 
+test_df_nonoutcome = test_df_nonoutcome.sample(n = n_outcomes, replace=False, random_state = seed_no, ignore_index = True)
+
+test_df = pd.concat([test_df_outcome, test_df_nonoutcome], axis=0).reset_index(drop = True) # concatenate
 test_data = Dataset.from_pandas(test_df, preserve_index = False)
 
 ## REMAINING IDS
 train_eval_ids = [id for id in studyids if id not in test_ids]
 
 ## FUNCTION FOR TRAINING, EVAL DATA BASED ON N ARTICLES
-def set_train_eval(n, seed, labels, eval_prop = 0.2, train_eval_ids = train_eval_ids, df_use = model_data):
+def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, outcome_data = mapdf_model, nonoutcome_data = negdf_model):
 
     # set seed
     random.seed(seed)
     
     # split ids
-    ids_use = train_eval_ids[:n]
+    ids_use = sample(train_eval_ids, n)
 
     train_prop = 1 - eval_prop
     train_ids = sample(ids_use, round(train_prop * len(ids_use)))
     eval_ids = list(set(ids_use) - set(train_ids))
 
-    # set train data based on ids
-    train_df = df_use.loc[(df_use['Study ID'].isin(train_ids)), ]
+    # set train, eval data based on ids
+    # outcomes
+    train_outcome_df = outcome_data.loc[outcome_data['Study ID'].isin(train_ids), ].drop(columns = ['Study ID'])
+    n_train_outcomes = train_outcome_df.shape[0]
+    eval_outcome_df = outcome_data.loc[outcome_data['Study ID'].isin(eval_ids), ].drop(columns = ['Study ID'])
+    n_eval_outcomes = eval_outcome_df.shape[0]
 
-    # set eval data based on ids and labels
-    eval_df = df_use.loc[(df_use['Study ID'].isin(eval_ids)), ]
-    
+    # non outcomes
+    train_nonoutcome_df = nonoutcome_data.loc[nonoutcome_data['Study ID'].isin(train_ids), ].drop(columns = ['Study ID'])
+    train_nonoutcome_df = train_nonoutcome_df.sample(n = n_train_outcomes, replace=False, random_state = seed, ignore_index = True)
+
+    eval_nonoutcome_df = nonoutcome_data.loc[nonoutcome_data['Study ID'].isin(eval_ids), ].drop(columns = ['Study ID'])
+    eval_nonoutcome_df = eval_nonoutcome_df.sample(n = n_eval_outcomes, replace=False, random_state = seed, ignore_index = True)
+
+    # concatenate
+    train_df = pd.concat([train_outcome_df, train_nonoutcome_df], axis=0).reset_index(drop = True) # concatenate
+    eval_df = pd.concat([eval_outcome_df, eval_nonoutcome_df], axis=0).reset_index(drop = True)
+
     # convert to transformers dataset
     train_data = Dataset.from_pandas(train_df, preserve_index = False)
     eval_data = Dataset.from_pandas(eval_df, preserve_index = False)
@@ -122,15 +142,15 @@ labels = ['outcome', 'not outcome']
 ### device
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-### parameters from HPO
+### parameters
 params = {
     'head_params': {
         'solver': 'liblinear',
-        'max_iter': 100
+        'max_iter': 200
     },
     'batch_size': 64,
-    'num_epochs': 3,
-    'body_learning_rate': 1.04e-05
+    'num_epochs': 2,
+    'body_learning_rate': 1.5e-05
     }
 
 ## FUNCTION FOR MODELLING BASED ON N ARTICLES
@@ -139,7 +159,7 @@ def fit_model(n, seed, labels, model_name = model_name, params = params, device 
     logger.warning(f"Fitting model using {n} articles...")
 
     # Set train and eval data
-    train_data, eval_data = set_train_eval(n, seed, labels)
+    train_data, eval_data = set_train_eval(n, seed)
 
     # Load SetFit model from Hub
     model = SetFitModel.from_pretrained(
@@ -195,7 +215,7 @@ def fit_model(n, seed, labels, model_name = model_name, params = params, device 
     logger.warning(f"Model fit with {n} articles achieves model with following macro avg: {report.get('macro avg')}")
 
     # Write to file
-    out_path = join(output_dir, "n-art_binary_model-eval_class-reps-1.json")
+    out_path = join(output_dir, "n-art_binary_model-eval_class-reps-2.json")
 
     try:
         with open(out_path, 'r') as f:
@@ -213,7 +233,7 @@ def fit_model(n, seed, labels, model_name = model_name, params = params, device 
     return model
 
 ## FITTING MODELS
-train_sizes = list(range(5,101,5)) # train size set as number of articles
+train_sizes = list(range(25,50,5)) # train size set as number of articles
 
 for n_articles in train_sizes:
     fit_model(n_articles, seed_no, labels = labels)

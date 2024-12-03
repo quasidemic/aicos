@@ -5,15 +5,16 @@ import sys
 import os
 from os.path import join
 import pandas as pd
+import re
+from setfit import SetFitModel, Trainer, TrainingArguments
+from sklearn.model_selection import train_test_split
+from datasets import Dataset
 import random
 from random import sample
-import logging
-import numpy as np
-from setfit import SetFitModel, Trainer, TrainingArguments
-from datasets import Dataset
-from sklearn.metrics import classification_report, confusion_matrix
+from optuna import Trial
+from optuna.samplers import TPESampler
 import torch
-import json
+import logging
 
 project_dir = join('/work', 'aicos')
 modules_p = join(project_dir, 'modules')
@@ -22,17 +23,18 @@ os.makedirs(logs_dir, exist_ok=True)
 
 sys.path.append(modules_p)
 
+from modelling import *
+
 ## LOGGING SETUP
 logging.basicConfig(
-    filename=join(logs_dir, 'predict_binary_nov24.log'),  # Log file name
+    filename=join(logs_dir, 'hpo_binary-model_nov24_4.log'),  # Log file name
     filemode='w',        # Write mode
     format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
     datefmt='%Y-%m-%d %H:%M:%S',
-    level=logging.WARNING   # warning level - easiest way to avoid unnecessary prints
+    level=logging.WARNING   # Log level
 )
 
 logger = logging.getLogger()
-
 
 ## DIRS AND PATHS
 data_dir = join(project_dir, 'data')
@@ -100,7 +102,7 @@ def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, ou
     random.seed(seed)
     
     # split ids
-    ids_use = train_eval_ids[:n]
+    ids_use = sample(train_eval_ids, n)
 
     train_prop = 1 - eval_prop
     train_ids = sample(ids_use, round(train_prop * len(ids_use)))
@@ -128,10 +130,12 @@ def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, ou
     train_data = Dataset.from_pandas(train_df, preserve_index = False)
     eval_data = Dataset.from_pandas(eval_df, preserve_index = False)
 
-    return ids_use, train_data, eval_data
+    return train_data, eval_data
 
+## SET TRAIN AND EVAL DATA
+train_data, eval_data = set_train_eval(15, seed_no, eval_prop = 0)
 
-## MODEL, LABELS AND HYPERPARAMETERS
+## MODEL AND LABELS
 ### model
 model_name = "thenlper/gte-base"
 ### labels
@@ -139,95 +143,59 @@ labels = ['outcome', 'not outcome']
 ### device
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-### parameters from HPO
-params = {
-    'head_params': {
-        'solver': 'liblinear',
-        'max_iter': 100
-    },
-    'batch_size': 64,
-    'num_epochs': 3,
-    'body_learning_rate': 1.04e-05
+## HYPERPARAMETER OPTIMIZATION
+### Functions for HP-opt
+#### model init
+def model_init(params):
+    params = params or {}
+    max_iter = params.get("max_iter", 100)
+    solver = params.get("solver", "liblinear")
+    params = {
+        "head_params": {
+            "max_iter": max_iter,
+            "solver": solver,
+        }
     }
 
+    model_use = SetFitModel.from_pretrained(
+        model_name,
+        labels = labels,
+        **params).to(device)
 
-## SET TRAIN AND EVAL DATA 
-n = 30 # use 30 based on 03_model-select-train
-ids_use, train_data, eval_data = set_train_eval(n, seed_no)
+    return(model_use)
 
-
-## MODEL TRAINING
-# Load SetFit model from Hub
-model = SetFitModel.from_pretrained(
-    model_name,
-    head_params = params.get('head_params'),
-    labels = labels
-    ).to(device)
-
-# Setfit Training arguments
-args = TrainingArguments(
-    batch_size = params.get('batch_size'),
-    num_epochs = params.get('num_epochs'),
-    body_learning_rate = params.get('body_learning_rate'),
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    load_best_model_at_end=True,
-    show_progress_bar=False
-)
+#### HP space
+def hp_space(trial):
+    return {
+        #"body_learning_rate": trial.suggest_float("body_learning_rate", 1e-7, 1e-5, log=True), # first run
+        "body_learning_rate": trial.suggest_float("body_learning_rate", 1e-7, 1e-4, log=True), # second run
+        "num_epochs": trial.suggest_int("num_epochs", 2, 6),
+        "batch_size": trial.suggest_categorical("batch_size", [16, 32, 48, 64]),
+        "max_iter": trial.suggest_categorical("max_iter", [50, 100, 150, 200, 250, 300]),
+        "solver": trial.suggest_categorical("solver", ["lbfgs", "liblinear"]),
+    }
 
 # Setfit Trainer
 trainer = Trainer(
-    model=model,
-    args=args,
-    train_dataset=train_data,
-    eval_dataset=eval_data,
-    metric="accuracy",
+    train_dataset = train_data,
+    eval_dataset = test_data,
+    model_init = model_init,
+    metric = "accuracy",
     column_mapping={"text": "text", "label": "label"}  # Map dataset columns to text/label expected by trainer
 )
 
-# Train
-trainer.train()
+# Run HP opt
+best_run = trainer.hyperparameter_search(direction="maximize", hp_space=hp_space, n_trials=10, sampler=TPESampler(seed=4444))
 
-# Evaluate
-y_true = list(eval_data['label'])
-y_pred = model.predict(list(eval_data['text']))
+# store trials
+trials_out = join(output_dir, 'hpo_trials-4.txt')
 
-report = classification_report(y_true, y_pred, output_dict = True, zero_division = 0)
-cm = confusion_matrix(y_true, y_pred, labels = labels)
+for trial in best_run.backend.trials:
+    trial_string = f"Trial {trial.number} | Objective value: {trial.value} | Hyperparameters: {trial.params}"
+    logger.warning(trial_string)
 
-FP = cm.sum(axis=0) - np.diag(cm)
-FN = cm.sum(axis=1) - np.diag(cm)
-TP = np.diag(cm)
-TN = (cm.sum() - (FP + FN + TP))
-
-report['n_articles'] = n
-report['seed_no'] = seed_no
-report['params'] = params
-report['FP'] = FP.tolist()
-report['FN'] = FN.tolist()
-report['TP'] = TP.tolist()
-report['TN'] = TN.tolist()
-
-logger.warning(f"Final binary model fit with {n} articles achieves model with following macro avg: {report.get('macro avg')}")
-
-# Write to file
-out_path = join(output_dir, "report_binary-model_final_nov24.json")
-
-with open(out_path, 'w') as f:
-    json.dump(report, f)
-
-# Save model
-modeloutp = join(models_dir, 'binary_model_nov24')
-model.save_pretrained(modeloutp)
-
-## PREDICTIONS
-predict_df = mapdf.loc[not_case_report_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
-predict_df = pd.concat([predict_df, negdf], axis=0).reset_index(drop = True)
-predict_df['used_in_training'] = predict_df['Study ID'].isin(ids_use)
-
-# predict
-predict_df['predicted'] = model.predict(list(predict_df['text']))
-
-# write to file
-predict_outp = join(output_dir, 'outcome-notoutcome_predictions_nov24.csv')
-predict_df.to_csv(predict_outp, index = False)
+    with open(trials_out, 'a') as f:
+        f.write(trial_string + '\n')
+        f.close()
+    
+logger.warning(best_run)

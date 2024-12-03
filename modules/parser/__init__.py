@@ -6,6 +6,7 @@ import os
 from os.path import join
 from pdfminer.high_level import extract_text
 from sentence_transformers import SentenceTransformer
+from sentence_transformers.util import cos_sim
 from sklearn.metrics.pairwise import cosine_similarity
 from setfit import SetFitModel
 import numpy as np
@@ -16,7 +17,7 @@ import spacy
 ## DIRS AND PATHS
 project_dir = join('/work', 'aicos')
 data_dir = join(project_dir, 'data')
-pdf_dir = join(data_dir, "articles")
+pdf_dir = join(data_dir, 'articles_2024-08-22')
 plot_dir = join(project_dir, 'plots')
 output_dir = join(project_dir, 'output')
 models_dir = join(project_dir, 'models')
@@ -31,9 +32,15 @@ od_model_p = join(models_dir, 'od_model')
 ## LOAD MODELS
 outcome_model = SetFitModel.from_pretrained(outcome_model_p)
 od_model = SetFitModel.from_pretrained(od_model_p)
+stmodel = SentenceTransformer('thenlper/gte-base')
 
 # Load the English language model
 nlp = spacy.load("en_core_web_sm")
+
+# Global params
+## section regex
+SEC_REG = re.compile(r"\n+(?:\b\S{1,3})?(?:[ \t]*\b[a-z]{3,}\b){1,5}[ \t]*\n+", re.IGNORECASE)
+    
 
 ## FUNCTION FOR FINDING SECTION CLOSEST TO "RESULTS"
 def ident_results_section(sections, string_sect_start = 'results', string_sect_end = 'discussion', model_name='all-MiniLM-L6-v2'):
@@ -76,11 +83,8 @@ def ident_results_section(sections, string_sect_start = 'results', string_sect_e
     return match_start_idx, match_end_idx
 
 ## FUNCTION FOR EXTRACT RESULTS SECTION
-def extract_results(text):
+def extract_results(text, sec_reg = SEC_REG):
 
-    ## section regex
-    sec_reg = re.compile(r"\n+(?:\b\S{1,3})?(?:[ \t]*\b[a-z]{3,}\b){1,5}[ \t]*\n+", re.IGNORECASE)
-    
     # list of section headings based on regex
     sections = list(re.finditer(sec_reg, text))
     # filter sections based on span start (avoid results, discussion headings as part of abstract/introduction)
@@ -106,6 +110,36 @@ def extract_results(text):
     text_results = text[start_pos:end_pos].strip()
 
     return text_results
+
+## FUNCTION FOR EXTRACTING TEXT BEFORE RESULTS
+def extract_preresults(text, sec_reg=SEC_REG):
+
+    # list of section headings based on regex
+    sections = list(re.finditer(sec_reg, text))
+
+    # filter sections based on span start (avoid results, discussion headings as part of abstract/introduction)
+    len_t = len(text)
+    span_thres = int(len_t/6)
+    sections_latter = [s for s in sections if s.start() > span_thres]
+
+    # return if no sections
+    if not sections_latter:
+        return
+
+    # identify results-heading
+    result_start, result_end = ident_results_section(sections_latter)
+
+    # Return if no result section or not valid structure
+    if result_start is None or result_end is None:
+        return # no result section found
+
+    # extract text leading up to results-section
+    start_pos = 2500 # start after abstracts (assuming abstracts occurs within the first 2500 characters)
+    end_pos = sections_latter[result_start].start()
+
+    text_preresults = text[start_pos:end_pos]
+
+    return text_preresults
 
 
 ## WRAPPER FUNCTION FOR PREDICT WITH PROBABILITY
@@ -190,16 +224,23 @@ def segment_predict(results_text, segmenter=pysbd.Segmenter(language="en", clean
 
     # segment sentences to noun phrases
     results_phrases = []
-    for sentence in sentences:
+    sentence_indices = []
+    for c, sentence in enumerate(sentences):
         sent_phrases = extract_noun_phrases(sentence)
 
-        results_phrases.extend(sent_phrases)
+        # ensure no duplicates
+        sent_phrases = [phrase for phrase in sent_phrases if phrase not in results_phrases]
 
-    # remove duplicates
-    results_phrases = list(set(results_phrases))
+        # add to lists
+        results_phrases.extend(sent_phrases)
+        sentence_indices.extend([c]*len(sent_phrases))
 
     # predict outcomes
     outcome_predictions = predict_withproba(results_phrases, outcome_model)
+
+    # add sentence
+    for sentence_i, prediction in zip(sentence_indices, outcome_predictions):
+        prediction['sentence context'] = sentences[sentence_i]
 
     # predicted verbatim outcomes
     verb_outc_pred = [pred for pred in outcome_predictions if pred.get("label") == "outcome"]
