@@ -1,0 +1,339 @@
+---
+title: "AI in the COS"
+format: pdf
+editor: visual
+bibliography: references.bib
+bibliographystyle: apa
+execute:
+  echo: false
+  warning: false
+  error: false
+---
+
+```{r setup}
+library(dplyr)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(scales)
+library(forcats)
+
+setwd("~/OneDrive/phd/projekter/aicos")
+
+n_arts_df <- read_csv("output/metrics_binary-model_n-art.csv")
+cross_val_df <- read_csv("output/cross-val_bm_metrics_nov24.csv")
+bm_preds <- read_csv("output/outcome-notoutcome_predictions_nov24.csv")
+od_preds <- read_csv("output/outcome-domains_predictions_nov24.csv")
+odm_mets <- read_csv("output/odm_metrics_nov24.csv")
+bm_mets <- read_csv("output/bm_metrics_nov24.csv")
+bm_conf <- read_csv("output/bm_conf_mat_nov24.csv")
+outc_preds <- read_csv("output/extracted_outcomes_20241203.csv")
+
+n_articles <- length(unique(od_preds$`Study ID`))
+n_outcomes <- nrow(filter(bm_preds, label != "not outcome"))
+
+labels_exclude <- c('Hospital', 'Need for further intervention', 'Economics', 'not outcome') # resource use labels - excluded from model training
+
+# output dirs
+tables_out <- file.path(".", "output", "tables")
+plots_out <- file.path(".", "output", "plots")
+```
+
+# Introduction
+
+Using a few-shot learning approach for creating a text classifier to assign outcome domain to sentences from the results-section of articles from medical journal, this text explores the feasibility of creating a model capable of predicting the appropriate outcome domain as well as evaluates the amount of manual labour needed in order to get a working model.
+
+# Data
+
+We use an annotated data set containing `{r} n_outcomes` verbatim outcomes from `{r} n_articles` research articles. All verbatim outcomes are extracted manually from the results-section of the articles and then assigned the appropriate outcome domain. A total of 20 outcome domains are represented in the data.
+
+Verbatim non-outcomes were extracted from each article from sections prior to the "Results" section. Non-outcomes are defined as noun phrases along with associated adjectives and preprositional modifiers. In order to make sure that the negative samples differed from the verbatim outcomes as much as possible, we within each article sampled sentences that differed the most from the manually extracted verbatim outcomes. For both the training and evaluation data, the number of negative samples added was set to match the number of verbatim outcomes.
+
+# Approach
+
+In order to assess how much manual labour (i.e. manually extracting verbatim outcomes) is needed in order to train a usable model, we train a series of models using between 5 and 85 articles in increments of 5. This allows us to assess the amount of manual labour necessary to get a working model to extract verbatim outcomes from a research article.
+
+25 % of articles (28 articles) were set aside as a test set that all models were evaluated on. In order to simulate having to train a model with only a specific number of articles prepared, articles were split into training and evaluation data using an 80-20 split with each training (for 5 articles: 4 for training; 1 for evaluation, for 10 articles: 8 for training, 2 for evaluation and so on).
+
+In order to avoid models being overfit on sentences containing a verbatim outcomes, sentences were randomly sampled from other sections of the used articles to act as "negative samples".
+
+# Model training
+
+Models are trained with few-shot learning using SetFit [@tunstall_2022]. This training approach uses an existing transformer model as the basis for training a text classifier. A transformer model is a model that has encoded contextual meaning about individual words and sentences. Each word or sentence in a transformer is represented by a series of numbers rather than the word itself. These numbers reflect how the word or sentence have been used in context in whatever training data the model is based on (usually large amounts of various English texts from the web).\
+This kind of model training involves three main steps:
+
+1.  Selecting a pre-existing transformer/embeddings model. This acts as a converter for our training data giving all input texts (sentences) the same number of features. See further below.
+2.  Fine-tuning the weights in the model. This involves adjusting the weights in the model to better fit with the training data. Usually transformer models are trained on more generic English texts but as articles from medical journal is a unique genre with a different vocabulary, the model has to be adjusted slightly to better learn how to encode the training data.
+3.  Fitting a classifier based on the embeddings. This step converts all input texts (sentences) to embeddings based on the fine-tuned model and then fits a classifier to predict the outcome (using logistic regression).
+
+## Classifying text using embeddings
+
+A text classifier model aims at assigning one of several predefined labels (or "classes") to a given input text (word, sentence, document). A classifier is trained using examples of how text with a given label should look. In this case, we want to assign what outcome (label/class) a sentence (input text) from the results section of an article belongs to.
+
+The fundamental challenge in training text classifiers is the fact that the variables (or "features") used for making the predictions are the individual words. Imagine for example that the data used for training the model contains 2000 unique words. The model will then try to assign a label to an input text based on the presence of those 2000 words. This quickly leads to problems of high dimensionality (a lot of variables) and high sparsity (many 0-counts), which severely affects model performance or even feasibility of training a working model.
+
+A way to solve this is by using embeddings as features rather than the individual words. By using embeddings, words are mapped to a fixed multidimensional space, allowing a collection of texts to be summarized by less features than the number of words (usually between 300-1000 features depending on the model). This way the input text in a model will always be mapped to the same number of features, regardless of how many unique words are in the training data. Furthermore, the individual features no longer capture just individual words but rather different aspects of how words are used in context. When using embeddings, each word is assigned a series of numbers corresponding to the number of features (fx 300 numbers if the model contains 300 features). The individual numbers are not useful in themselves but how they differ from the numbers assigned to other words, reflect differences in how these words are used in context.
+
+By using a pre-existing embedding model that already contains these representations of many English words or sentences, far less training data is needed in order to create a classifier based on embeddings.
+
+# Predicting verbatim outcome
+
+The figure and table below illustrate how a model for predicting whether a sentence is an outcome or not is affected by the number of articles used for creating the model. Models were trained in increments of five articles with randomly sampled verbatim non-outcomes from the same articles as verbatim outcomes were taken from. For each model training, labels were balanced so that the number of non-outcomes always matched the number of outcomes.
+
+All models were evaluated on the same hold-out set of 28 articles. In order to simulate having to train the model with the given number of articles, articles were split into training and test set using an 80-20 split (80% for training; 20% for testing).
+
+```{r articles_bm}
+mets_plot <- n_arts_df |> 
+  filter(metric != 'support',
+         target == 'outcome')
+
+mets_table <- mets_plot |> 
+  select(metric, score, n_articles) |> 
+  mutate(score = percent(round(score, 3), accuracy = 0.1)) |> 
+  pivot_wider(id_cols = c(n_articles), names_from = metric, values_from = score) |> 
+  arrange(n_articles)
+
+## Score over n articles
+n_arts_plot <- ggplot(mets_plot, aes(x = n_articles, y = score)) + 
+  geom_point(aes(colour = metric)) + 
+  geom_line(aes(colour = metric)) + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(5, 100, 5)) + 
+  scale_y_continuous(labels = label_percent(), limits = c(0.85, 1.0)) + 
+  scale_colour_discrete(labels = c("F1-score", "Precision", "Recall")) +
+  labs(x = "Number of articles", y = "Evaluation metric score", colour = "Evaluation metric") + 
+  ggtitle("Predictive performance based on n articles")
+
+kable(mets_table)
+kable(mets_table, "html") |> 
+  cat(file = file.path(tables_out, "n-arts_model-metrics.html"))
+
+print(n_arts_plot)
+
+ggsave(file.path(plots_out, "n-arts_model-metrics_plot.png"), n_arts_plot, width = 16, height = 10, dpi = 300, scale = 0.5)
+```
+
+Each trained model was evaluated against the same test set of 25 % of the articles (n = 28). The figure shows the evolution of precision (fraction of relevant instances among the retrieved instances) and recall (/sensitivity - fraction of relevant instances that were retrieved) over increasing number of articles used for training the model.
+
+## Cross-validation
+
+Based on the figure above, we fit a model based on 20 articles.
+
+We use stratified k-fold cross-validation to validate a model based on 20 articles. The cross-validation is done to ensure that the performance obtained from a model based on 20 articles is robust and not due to a particular training-test split. Cross-validated is done in five folds, with the 20 articles being split into five folds, and model training done five times using four folds for training and one for testing, with the fold used for testing changing with each model training.
+
+The results of the cross-validation can be seen in the table below.
+
+```{r crossval}
+# cross-validation results
+
+cross_val_tab <- cross_val_df |> 
+  filter(metric %in% c('precision', 'recall', 'f1-score'), 
+         target == 'outcome') |> 
+  select(fold, metric, score) |> 
+  mutate(score = round(score, 3)) |> 
+  pivot_wider(id_cols = fold, names_from = metric, values_from = score) |> 
+  mutate(fold = as.character(fold)) |>  
+  rename(f1 = `f1-score`)
+
+cross_val_tab <- cross_val_tab |> 
+  bind_rows(data.frame(fold = "average",
+                       precision = round(mean(cross_val_tab$precision), 3),
+                       recall = round(mean(cross_val_tab$recall), 3),
+                       f1 = round(mean(cross_val_tab$f1), 3))) |>
+  mutate(across(c(-fold), ~ percent(.x, accuracy = 0.1)))
+  
+
+kable(cross_val_tab)
+kable(cross_val_tab, "html") |> 
+  cat(file = file.path(tables_out, "crossval_metrics.html"))
+```
+
+## Applying model
+
+Performance metrics for final model for predicting outcome/not outcome:
+
+```{r bm_preds}
+
+bm_mets_out <- bm_mets |> 
+  filter(metric %in% c('precision', 'recall', 'f1-score'), 
+         target %in% c('outcome', 'not outcome')) |> 
+  select(target, metric, score) |> 
+  mutate(score = percent(round(score, 3), accuracy = 0.1)) |> 
+  pivot_wider(id_cols = target, names_from = metric, values_from = score) |> 
+  rename(f1 = `f1-score`)
+
+kable(bm_mets_out)
+kable(bm_mets_out, "html") |> 
+  cat(file = file.path(tables_out, "bm_metrics.html"))
+  
+
+bm_preds <- bm_preds |> 
+  mutate(actual = ifelse(label == "not outcome", "not outcome", "outcome"),
+         correct = predicted == actual) |> 
+  filter(actual == "outcome")
+
+correct_pct <- paste(round((sum(bm_preds$correct) / nrow(bm_preds))*100, 2), "%")
+
+```
+
+Applying the model to the entire data set of `{r} n_articles` articles, the model was able to identify `{r} correct_pct` of the verbatim outcomes.
+
+```{r bm_conf_mat}
+
+conf_mat_plot <- ggplot(bm_conf, aes(x = factor(Predicted, levels = c("TRUE", "FALSE")), y = Actual)) + 
+  geom_tile(fill = "white", colour = "black") + 
+  geom_text(aes(x = Predicted, y = Actual, label = count)) + 
+  theme_minimal() + 
+  scale_x_discrete(position = "top") +
+  labs(x = "Predicted")
+
+print(conf_mat_plot)
+
+ggsave(file.path(plots_out, "bm_conf-mat_plot.png"), conf_mat_plot, width = 16, height = 10,
+       scale = 0.5, dpi = 300)
+```
+
+# Predicting outcome domains
+
+Using the same 20 articles as for the verbatim outcome model, we train a model to predict the outcome domain of the verbatim outcome. We then apply this model on all the sentences that the verbatim outcome model predicted as verbatim outcomes.
+
+As not all outcome domains are present in the 20 articles, there will be a lot of outcome domains that the model is not able to predict, as it will not have seen examples of those outcomes before.
+
+The table below shows the average performance for the model for predicting outcome domain. The "macro avg" averages across the per-label score - including the ones that were not present in the training data. The "weighted avg" is weighted based on the number of examples present in the data (i.e. the number of sentences). Put differently: The macro avg evaluates mean performance in terms of assigning the correct outcome domain. The weighted avg evaluates overall performance (based on total number of examples/sentences).
+
+```{r od_metrics}
+
+odm_mets_tab <- odm_mets |> 
+  mutate(across(c(-eval), ~ percent(round(.x, 3), accuracy = 0.1))) 
+
+kable(odm_mets_tab)
+
+kable(odm_mets_tab, "html") |> 
+  cat(file = file.path(tables_out, "outcome-domain-model_metrics.html"))
+
+```
+
+The table and figures below compare the distribution of outcome domains between the predicted and the actual.
+
+```{r od_preds}
+
+od_preds <- od_preds |> 
+  filter(!(label %in% labels_exclude))
+
+od_preds_simple <- od_preds |> 
+  filter(predicted == 'outcome') |> 
+  select(label, predicted_od) |> 
+  pivot_longer(cols = everything(), names_to = 'origin', values_to = 'label')
+
+od_preds_contrast <- od_preds |> 
+  filter(predicted == 'outcome') |> 
+  select(label, predicted_od) |> 
+  mutate(true_pred = predicted_od == label) |> 
+  group_by(label) |> 
+  summarize(n = n(),
+            n_true = sum(true_pred)) |> 
+  ungroup() |> 
+  mutate(prop_true = n_true / n)
+
+od_preds_sum <- od_preds_simple |> 
+  group_by(origin, label) |> 
+  summarize(count = n()) |> 
+  ungroup()
+
+od_compare <- od_preds_sum |> 
+  filter(origin == 'label') |> 
+  select(-origin) |> 
+  rename(y_true = count) |> 
+  left_join(od_preds_sum |> 
+              filter(origin == 'predicted_od') |> 
+              select(-origin) |> 
+              rename(y_pred = count),
+            by = 'label') |> 
+  replace_na(list(y_pred = 0))
+  
+
+od_pred_dist_table <- od_compare |> 
+  left_join(select(od_preds_contrast, label, n_true, prop_true), by = 'label') |> 
+  mutate(prop_true = percent(prop_true, accuracy = 0.1)) |> 
+  select(label, y_true, y_pred, n_true, prop_true) |> 
+  rename(`Outcome domain` = label, Predicted = y_pred, Actual = y_true, `Correctly predicted` = n_true, `Percent correctly predicted` = prop_true) |> 
+  arrange(desc(Actual))
+  
+kable(od_pred_dist_table)
+
+kable(od_pred_dist_table, "html") |> 
+  cat(file = file.path(tables_out, "outcome-domain_predicted-actual.html"))
+
+```
+
+```{r pred_dist}
+
+od_dist_df <- od_preds_simple |> 
+  filter(origin == 'label') |> 
+  group_by(label) |> 
+  summarize(n = n()) |> 
+  ungroup() |> 
+  mutate(percent = n/sum(n))
+
+od_pred_dist_df <- outc_preds |> 
+  rename(label = outcome_domain) |> 
+  group_by(label) |> 
+  summarize(n_pred = n()) |> 
+  ungroup() |> 
+  mutate(percent_pred = n_pred/sum(n_pred))
+
+od_dist_comb <- od_dist_df |> 
+  left_join(od_pred_dist_df, by = "label") |> 
+  replace_na(list(n_pred = 0, percent_pred = 0)) |> 
+  filter(label != "not outcome")
+
+# actual
+od_dist_plot <- od_dist_comb |>
+  select(label, n, percent) |> 
+  ggplot(aes(x = fct_reorder(label, percent, .desc = TRUE), y = percent)) + 
+  geom_bar(position = 'dodge', stat = 'identity') + 
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1)) + 
+  labs(x = "Outcome domain", 
+        y = "Percent of verbatim outcomes", 
+        title = "Actual outcome domains")
+
+# predicted
+od_pred_dist_plot <- od_dist_comb |>
+  select(label, n_pred, percent, percent_pred) |> 
+  ggplot(aes(x = fct_reorder(label, percent, .desc = TRUE), y = percent_pred)) + 
+  geom_bar(position = 'dodge', stat = 'identity') + 
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) + 
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1)) + 
+  labs(x = "Outcome domain", 
+        y = "Percent of verbatim outcomes", 
+        title = "Predicted outcome domains")
+
+#od_pred_dist2 <- od_preds_contrast |> 
+#  select(label, prop_true) |> 
+#  ggplot(aes(x = label, y = prop_true)) + 
+#  geom_bar(position = 'dodge', stat = 'identity') + 
+#  scale_y_continuous(labels = scales::percent) + 
+#  theme_minimal() + 
+#  theme(axis.text.x = element_text(angle = 45, vjust =1, hjust=1)) + 
+#  ggtitle("Percent correctly predicted outcome domains")
+
+print(od_dist_plot)
+
+ggsave(file.path(plots_out, "outocme-domain_dist-actual.png"), od_dist_plot, width = 16, height = 10, dpi = 300, scale = 0.5)
+
+print(od_pred_dist_plot)
+
+ggsave(file.path(plots_out, "outocme-domain_dist-predicted.png"), od_pred_dist_plot, width = 16, height = 10, dpi = 300, scale = 0.5)
+
+```
+
+{{< pagebreak >}}
+
+# References {.unnumbered}
+
+::: {#refs}
+:::
