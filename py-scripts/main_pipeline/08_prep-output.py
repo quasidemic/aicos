@@ -15,7 +15,7 @@ plot_dir = join(project_dir, 'plots')
 
 ## READ 
 cv_mets_p = join(output_dir, 'cross-val_binary_model_nov24.json')
-od_mets_p = join(output_dir, 'report_outcome-domain-model_final_nov24.json')
+od_mets_p = join(output_dir, 'report_outcome-domain-model_final_may25.json')
 bm_mets_p = join(output_dir, 'report_binary-model_final_nov24.json')
 
 ## CV
@@ -75,5 +75,5 @@ m_select_df = m_select_df.loc[m_select_df['metric'].isin(['precision', 'recall',
 m_select_df = m_select_df.transpose().reset_index().rename(columns = {'index': 'eval', 0: 'precision', 1: 'recall', 2: 'f1-score'})
 m_select_df = m_select_df.iloc[1:, ]
 
-od_mets_out = join(output_dir, 'odm_metrics_nov24.csv')
+od_mets_out = join(output_dir, 'odm_metrics_may25.csv')
 m_select_df.to_csv(od_mets_out, index=False)

@@ -44,12 +44,22 @@ os.makedirs(plot_dir, exist_ok=True)
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(models_dir, exist_ok=True)
 
+mapdata_p = join(data_dir, 'articles_outcomes_nov24.csv')
 predictdata_p = join(output_dir, 'outcome-notoutcome_predictions_nov24.csv')
+
+## READ MAPPINGS
+mapdf = pd.read_csv(mapdata_p) # mappings
 
 ## READ MAPPINGS WITH PREDICTIONS
 predict_df = pd.read_csv(predictdata_p) # predictions
 
 n_articles = len(predict_df.loc[predict_df['used_in_training'], 'Study ID'].unique().tolist())
+
+
+## DATA HANDLING
+cols_keep = ['Study ID', 'Verbatim Outcomes', 'Outcome Domains']
+has_results_filter = mapdf['has results'] == True
+mapdf_model = mapdf.loc[has_results_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
 
 ### fix labels
 labels_fix = {
@@ -61,6 +71,9 @@ labels_fix = {
 predict_df['label'] = predict_df['label'].replace(labels_fix)
 predict_df['label'] = predict_df['label'].str.strip()
 
+mapdf_model['label'] = mapdf_model['label'].replace(labels_fix)
+mapdf_model['label'] = mapdf_model['label'].str.strip()
+
 ## FILTER FOR TRAINING
 model_data = predict_df.loc[predict_df['used_in_training'], :] # use same articles as used in binary model
 
@@ -68,14 +81,28 @@ labels_exclude = ['Hospital', 'Need for further intervention', 'Economics'] # la
 model_data = model_data.loc[~model_data['label'].isin(labels_exclude), :] # exclude labels
 model_data = model_data.loc[model_data['label'] != 'not outcome', :] # only keep verbatim outcomes
 
-## IDS FOR MODELLING
+mapdf_model = mapdf_model.loc[~mapdf_model['label'].isin(labels_exclude), :] # exclude labels
+
+## ALL IDS
+studyids = mapdf_model['Study ID'].unique().tolist()
+
+## IDS USED FOR BINARY MODEL
 ids_use = model_data['Study ID'].unique().tolist()
 
 ## SEED USED
 seed_no = 4220
 
-## TRAINING, EVAL DATA
+## SET FIXED TEST SET
 random.seed(seed_no)
+
+test_size = 0.25
+test_ids = sample(studyids, round(test_size * len(studyids)))
+
+test_df = mapdf_model.loc[mapdf_model['Study ID'].isin(test_ids), ].drop(columns = ['Study ID']) 
+
+test_data = Dataset.from_pandas(test_df, preserve_index = False)
+
+## TRAINING, EVAL DATA
 eval_prop = 0.2
 train_prop = 1 - eval_prop
 
@@ -146,8 +173,8 @@ trainer = Trainer(
 trainer.train()
 
 # Evaluate
-y_true = list(eval_data['label'])
-y_pred = model.predict(list(eval_data['text']))
+y_true = list(test_data['label'])
+y_pred = model.predict(list(test_data['text']))
 
 report = classification_report(y_true, y_pred, output_dict = True, zero_division = 0)
 cm = confusion_matrix(y_true, y_pred, labels = labels)
@@ -168,7 +195,7 @@ report['TN'] = TN.tolist()
 logger.warning(f"Model for outcome domains fit with {n_articles} articles achieves model with following macro avg: {report.get('macro avg')}")
 
 # Write to file
-out_path = join(output_dir, "report_outcome-domain-model_final_nov24.json")
+out_path = join(output_dir, "report_outcome-domain-model_final_may25.json")
 
 with open(out_path, 'w') as f:
     json.dump(report, f)
