@@ -25,7 +25,7 @@ n_arts_df <- read_csv("output/metrics_binary-model_n-art.csv")
 cross_val_df <- read_csv("output/cross-val_bm_metrics_nov24.csv")
 bm_preds <- read_csv("output/outcome-notoutcome_predictions_nov24.csv")
 od_preds <- read_csv("output/outcome-domains_predictions_nov24.csv")
-odm_mets <- read_csv("output/odm_metrics_nov24.csv")
+odm_mets <- read_csv("output/odm_metrics_may25.csv")
 bm_mets <- read_csv("output/bm_metrics_nov24.csv")
 bm_conf <- read_csv("output/bm_conf_mat_nov24.csv")
 outc_preds <- read_csv("output/extracted_outcomes_20241203.csv")
@@ -207,11 +207,8 @@ The table below shows the average performance for the model for predicting outco
 odm_mets_tab <- odm_mets |> 
   mutate(across(c(-eval), ~ percent(round(.x, 3), accuracy = 0.1))) 
 
-kable(odm_mets_tab)
-
-kable(odm_mets_tab, "html") |> 
+kable(odm_mets_tab)kable(odm_mets_tab, "html") |> 
   cat(file = file.path(tables_out, "outcome-domain-model_metrics.html"))
-
 ```
 
 The table and figures below compare the distribution of outcome domains between the predicted and the actual.
