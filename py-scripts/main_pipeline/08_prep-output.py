@@ -14,7 +14,7 @@ output_dir = join(project_dir, 'output')
 plot_dir = join(project_dir, 'plots')
 
 ## READ 
-cv_mets_p = join(output_dir, 'cross-val_binary_model_nov24.json')
+cv_mets_p = join(output_dir, 'cross-val_binary_model_sep25.json')
 od_mets_p = join(output_dir, 'report_outcome-domain-model_final_sep25.json')
 bm_mets_p = join(output_dir, 'report_binary-model_final_sep25.json')
 
@@ -32,11 +32,13 @@ for k, m in enumerate(cv_metrics, start=1):
                                     var_name='target', value_name='score')
     m_select_df['n_articles'] = m.get('n_articles')
     m_select_df['accuracy'] = m.get('accuracy')
+    m_select_df['AUROC'] = m.get('AUROC')
+    m_select_df['AUPRC'] = m.get('AUPRC')
     m_select_df['fold'] = k
 
     model_metrics_df = pd.concat([model_metrics_df, m_select_df])
 
-cv_mets_out = join(output_dir, 'cross-val_bm_metrics_nov24.csv')
+cv_mets_out = join(output_dir, 'cross-val_bm_metrics_sep25.csv')
 model_metrics_df.to_csv(cv_mets_out, index=False)
 
 ## BM
@@ -46,6 +48,7 @@ with open(bm_mets_p, 'r') as f:
 m_select = {k:v for k,v in bm_metrics.items() if k in ['outcome', 'not outcome', 'weighted avg', 'macro avg']}
 m_select['outcome']['AUROC'] = bm_metrics.get('AUROC')
 m_select['outcome']['AUPRC'] = bm_metrics.get('AUPRC')
+m_select['macro avg']['accuracy'] = bm_metrics.get('accuracy')
 
 m_select_df = pd.DataFrame.from_dict(m_select, orient = 'columns').reset_index(names = 'metric')
 m_select_df = m_select_df.melt(id_vars='metric', value_vars=['outcome', 'not outcome', 'weighted avg', 'macro avg'], 

@@ -11,7 +11,7 @@ import logging
 import numpy as np
 from setfit import SetFitModel, Trainer, TrainingArguments
 from datasets import Dataset
-from sklearn.metrics import classification_report, confusion_matrix, average_precision_score, roc_auc_score
+from sklearn.metrics import classification_report, confusion_matrix, average_precision_score, roc_auc_score, accuracy_score
 import torch
 import json
 
@@ -162,6 +162,7 @@ FN = cm.sum(axis=1) - np.diag(cm)
 TP = np.diag(cm)
 TN = (cm.sum() - (FP + FN + TP))
 
+#report['accuracy'] = accuracy_score(y_true, y_pred)
 report['AUROC'] = roc_auc_score(y_true, y_pred_proba)
 report['AUPRC'] = average_precision_score(y_true, y_pred_proba, pos_label="outcome")
 report['n_articles'] = n
