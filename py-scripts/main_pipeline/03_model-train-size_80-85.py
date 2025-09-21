@@ -13,7 +13,7 @@ import numpy as np
 from setfit import SetFitModel, Trainer, TrainingArguments
 from datasets import Dataset
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, average_precision_score, roc_auc_score
 import torch
 import json
 
@@ -28,7 +28,7 @@ from modelling import *
 
 ## LOGGING SETUP
 logging.basicConfig(
-    filename=join(logs_dir, 'eval_train_size_binary_nov24-5.log'),  # Log file name
+    filename=join(logs_dir, 'eval_train_size_binary_sep25-5.log'),  # Log file name
     filemode='w',        # Write mode
     format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
     datefmt='%Y-%m-%d %H:%M:%S',
@@ -195,6 +195,7 @@ def fit_model(n, seed, labels, model_name = model_name, params = params, device 
     # Evaluate
     y_true = list(test_data['label'])
     y_pred = model.predict(list(test_data['text']))
+    y_pred_proba = model.predict_proba(list(test_data['text']))[:, 1]
 
     report = classification_report(y_true, y_pred, output_dict = True, zero_division = 0)
     cm = confusion_matrix(y_true, y_pred, labels = labels)
@@ -204,6 +205,8 @@ def fit_model(n, seed, labels, model_name = model_name, params = params, device 
     TP = np.diag(cm)
     TN = (cm.sum() - (FP + FN + TP))
 
+    report['AUROC'] = roc_auc_score(y_true, y_pred_proba)
+    report['AUPRC'] = average_precision_score(y_true, y_pred_proba, pos_label="outcome")
     report['n_articles'] = n
     report['seed_no'] = seed
     report['params'] = params
@@ -215,7 +218,7 @@ def fit_model(n, seed, labels, model_name = model_name, params = params, device 
     logger.warning(f"Model fit with {n} articles achieves model with following macro avg: {report.get('macro avg')}")
 
     # Write to file
-    out_path = join(output_dir, "n-art_binary_model-eval_class-reps-5.json")
+    out_path = join(output_dir, "n-art_binary_model-eval_class-reps-5_revision-sep25.json")
 
     try:
         with open(out_path, 'r') as f:

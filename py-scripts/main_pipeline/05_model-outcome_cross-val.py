@@ -11,7 +11,7 @@ from datasets import Dataset
 import random
 from random import sample
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score, classification_report, average_precision_score, roc_auc_score
 import torch
 import logging
 import numpy as np
@@ -23,7 +23,7 @@ os.makedirs(logs_dir, exist_ok=True)
 
 ## LOGGING SETUP
 logging.basicConfig(
-    filename=join(logs_dir, 'crossval_binary_nov24.log'),  # Log file name
+    filename=join(logs_dir, 'crossval_binary_sep25.log'),  # Log file name
     filemode='w',        # Write mode
     format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
     datefmt='%Y-%m-%d %H:%M:%S',
@@ -196,14 +196,19 @@ for fold, (train_index, val_index) in enumerate(kf.split(texts_crossval, labels_
     # Evaluate
     y_true = list(fold_val_data['label'])
     y_pred = model.predict(list(fold_val_data['text']))
+    y_pred_proba = model.predict_proba(list(fold_val_data['text']))[:, 1]
 
     report = classification_report(y_true, y_pred, output_dict = True, zero_division = 0)
+
+    report['AUROC'] = roc_auc_score(y_true, y_pred_proba)
+    report['AUPRC'] = average_precision_score(y_true, y_pred_proba, pos_label="outcome")
+    report['n'] = n
 
     # Write fold metrics to log
     logging.warning(f'Metrics for fold {fold}: {report}')
 
     # Write report to file
-    out_path = join(output_dir, "cross-val_binary_model_nov24.json")
+    out_path = join(output_dir, "cross-val_binary_model_sep25.json")
 
     try:
         with open(out_path, 'r') as f:
@@ -220,4 +225,6 @@ for fold, (train_index, val_index) in enumerate(kf.split(texts_crossval, labels_
 
 # Avg. metrics
 avg_metrics = {metric: np.mean([m.get('macro avg')[metric] for m in reports]) for metric in ['precision', 'recall']}
-logging.warning(f"Average metrics across {n_splits} folds: {avg_metrics}")
+avg_auprc_auroc = {metric: np.mean([m.get(metric) for m in reports]) for metric in ['AUPRC', 'AUROC']}
+logging.warning(f"Average precision, recall across {n_splits} folds: {avg_metrics}")
+logging.warning(f"Average AUPRC, AUROC across {n_splits} folds: {avg_auprc_auroc}")

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
 pip install --upgrade pip
-pip install -r /work/aicos/requirements.txt
+pip install -r /work/aicos/requirements_snapshot.txt
 
 python -m spacy download 'en_core_web_sm'

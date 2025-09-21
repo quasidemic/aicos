@@ -5,14 +5,12 @@ import sys
 import os
 from os.path import join
 import pandas as pd
-import re
 import random
-from random import sample, shuffle
+from random import sample
 import logging
 import numpy as np
 from setfit import SetFitModel, Trainer, TrainingArguments
 from datasets import Dataset
-from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix, average_precision_score, roc_auc_score
 import torch
 import json
@@ -23,20 +21,6 @@ logs_dir = join(project_dir, 'logs')
 os.makedirs(logs_dir, exist_ok=True)
 
 sys.path.append(modules_p)
-
-from modelling import *
-
-## LOGGING SETUP
-logging.basicConfig(
-    filename=join(logs_dir, 'eval_train_size_binary_sep25-3.log'),  # Log file name
-    filemode='w',        # Write mode
-    format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
-    datefmt='%Y-%m-%d %H:%M:%S',
-    level=logging.WARNING   # warning level - easiest way to avoid unnecessary prints
-)
-
-logger = logging.getLogger()
-
 
 ## DIRS AND PATHS
 data_dir = join(project_dir, 'data')
@@ -60,13 +44,13 @@ negdf = pd.read_csv(negatives_p)
 
 ## DATA HANDLING
 cols_keep = ['Study ID', 'Verbatim Outcomes', 'Outcome Domains']
-has_results_filter = mapdf['has results'] == True
-mapdf_model = mapdf.loc[has_results_filter, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
+has_results_filter_outcome = mapdf['has results'] == True
+mapdf_model = mapdf.loc[has_results_filter_outcome, cols_keep].rename(columns={"Verbatim Outcomes": "text", "Outcome Domains": "label"})
 mapdf_model['label'] = "outcome"
 
 ### rename negatives df columns
-has_results_filter = negdf['has results'] == True
-negdf_model = negdf.loc[has_results_filter,].rename(columns={"non outcome": "text"})
+has_results_filter_negs = negdf['has results'] == True
+negdf_model = negdf.loc[has_results_filter_negs,].rename(columns={"non outcome": "text"})
 negdf_model['label'] = "not outcome"
 negdf_model = negdf_model[['Study ID', 'text', 'label']]
 
@@ -93,6 +77,7 @@ test_df_nonoutcome = test_df_nonoutcome.sample(n = n_outcomes, replace=False, ra
 test_df = pd.concat([test_df_outcome, test_df_nonoutcome], axis=0).reset_index(drop = True) # concatenate
 test_data = Dataset.from_pandas(test_df, preserve_index = False)
 
+
 ## REMAINING IDS
 train_eval_ids = [id for id in studyids if id not in test_ids]
 
@@ -103,7 +88,7 @@ def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, ou
     random.seed(seed)
     
     # split ids
-    ids_use = sample(train_eval_ids, n)
+    ids_use = train_eval_ids[:n]
 
     train_prop = 1 - eval_prop
     train_ids = sample(ids_use, round(train_prop * len(ids_use)))
@@ -131,16 +116,27 @@ def set_train_eval(n, seed, eval_prop = 0.2, train_eval_ids = train_eval_ids, ou
     train_data = Dataset.from_pandas(train_df, preserve_index = False)
     eval_data = Dataset.from_pandas(eval_df, preserve_index = False)
 
-    return train_data, eval_data
+    return ids_use, train_data, eval_data
 
 
-## MODEL, LABELS AND HYPERPARAMETERS
+## MODEL, LABELS
 ### model
-model_name = "thenlper/gte-base"
+model_name = join(models_dir, 'binary_model_nov24')
 ### labels
 labels = ['outcome', 'not outcome']
 ### device
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+## SET TRAIN AND EVAL DATA 
+n = 20 # use 20 based on 04_model-select-train
+ids_use, train_data, eval_data = set_train_eval(n, seed_no)
+
+# Load trained SetFit model
+model = SetFitModel.from_pretrained(
+    model_name,
+    labels = labels
+    ).to(device)
 
 ### parameters
 params = {
@@ -153,90 +149,31 @@ params = {
     'body_learning_rate': 1.5e-05
     }
 
-## FUNCTION FOR MODELLING BASED ON N ARTICLES
-def fit_model(n, seed, labels, model_name = model_name, params = params, device = device, test_data = test_data, logger = logger):
+# Evaluate
+y_true = list(test_data['label'])
+y_pred = model.predict(list(test_data['text']))
+y_pred_proba = model.predict_proba(list(test_data['text']))[:, 1]
 
-    logger.warning(f"Fitting model using {n} articles...")
+report = classification_report(y_true, y_pred, output_dict = True, zero_division = 0)
+cm = confusion_matrix(y_true, y_pred, labels = labels)
 
-    # Set train and eval data
-    train_data, eval_data = set_train_eval(n, seed)
+FP = cm.sum(axis=0) - np.diag(cm)
+FN = cm.sum(axis=1) - np.diag(cm)
+TP = np.diag(cm)
+TN = (cm.sum() - (FP + FN + TP))
 
-    # Load SetFit model from Hub
-    model = SetFitModel.from_pretrained(
-        model_name,
-        head_params = params.get('head_params'),
-        labels = labels
-        ).to(device)
+report['AUROC'] = roc_auc_score(y_true, y_pred_proba)
+report['AUPRC'] = average_precision_score(y_true, y_pred_proba, pos_label="outcome")
+report['n_articles'] = n
+report['seed_no'] = seed_no
+report['params'] = params
+report['FP'] = FP.tolist()
+report['FN'] = FN.tolist()
+report['TP'] = TP.tolist()
+report['TN'] = TN.tolist()
 
-    # Setfit Training arguments
-    args = TrainingArguments(
-        batch_size = params.get('batch_size'),
-        num_epochs = params.get('num_epochs'),
-        body_learning_rate = params.get('body_learning_rate'),
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        show_progress_bar=False
-    )
+# Write to file
+out_path = join(output_dir, "report_binary-model_final_sep25.json")
 
-    # Setfit Trainer
-    trainer = Trainer(
-        model=model,
-        args=args,
-        train_dataset=train_data,
-        eval_dataset=eval_data,
-        metric="accuracy",
-        column_mapping={"text": "text", "label": "label"}  # Map dataset columns to text/label expected by trainer
-    )
-
-    # Train
-    trainer.train()
-
-    # Evaluate
-    y_true = list(test_data['label'])
-    y_pred = model.predict(list(test_data['text']))
-    y_pred_proba = model.predict_proba(list(test_data['text']))[:, 1]
-
-    report = classification_report(y_true, y_pred, output_dict = True, zero_division = 0)
-    cm = confusion_matrix(y_true, y_pred, labels = labels)
-    
-    FP = cm.sum(axis=0) - np.diag(cm)
-    FN = cm.sum(axis=1) - np.diag(cm)
-    TP = np.diag(cm)
-    TN = (cm.sum() - (FP + FN + TP))
-
-    report['AUROC'] = roc_auc_score(y_true, y_pred_proba)
-    report['AUPRC'] = average_precision_score(y_true, y_pred_proba, pos_label="outcome")
-    report['n_articles'] = n
-    report['seed_no'] = seed
-    report['params'] = params
-    report['FP'] = FP.tolist()
-    report['FN'] = FN.tolist()
-    report['TP'] = TP.tolist()
-    report['TN'] = TN.tolist()
-
-    logger.warning(f"Model fit with {n} articles achieves model with following macro avg: {report.get('macro avg')}")
-
-    # Write to file
-    out_path = join(output_dir, "n-art_binary_model-eval_class-reps-3_revision-sep25.json")
-
-    try:
-        with open(out_path, 'r') as f:
-            # Load existing data as a list of dictionaries
-            reports = json.load(f)
-    except FileNotFoundError:
-        # If the file doesn't exist, start with an empty list
-        reports = []
-
-    reports.append(report)
-
-    with open(out_path, 'w') as f:
-        json.dump(reports, f)
-
-    return model
-
-## FITTING MODELS
-train_sizes = list(range(50,65,5)) # train size set as number of articles
-
-for n_articles in train_sizes:
-    fit_model(n_articles, seed_no, labels = labels)
+with open(out_path, 'w') as f:
+    json.dump(report, f)

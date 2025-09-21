@@ -32,6 +32,8 @@ for file in files_read:
                                         var_name='target', value_name='score')
         m_select_df['n_articles'] = m.get('n_articles')
         m_select_df['accuracy'] = m.get('accuracy')
+        m_select_df['AUROC'] = m.get('AUROC')
+        m_select_df['AUPRC'] = m.get('AUPRC')
         m_select_df['FP_o'] = m.get('FP')[0]
         m_select_df['FP_no'] = m.get('FP')[1]
         m_select_df['FN_o'] = m.get('FN')[0]
