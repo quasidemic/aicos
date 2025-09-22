@@ -21,12 +21,12 @@ library(forcats)
 
 setwd("~/OneDrive/phd/projekter/aicos")
 
-n_arts_df <- read_csv("output/metrics_binary-model_n-art.csv")
-cross_val_df <- read_csv("output/cross-val_bm_metrics_nov24.csv")
+n_arts_df <- read_csv("output/metrics_binary-model_n-art_sep25.csv")
+cross_val_df <- read_csv("output/cross-val_bm_metrics_sep25.csv")
 bm_preds <- read_csv("output/outcome-notoutcome_predictions_nov24.csv")
 od_preds <- read_csv("output/outcome-domains_predictions_nov24.csv")
-odm_mets <- read_csv("output/odm_metrics_may25.csv")
-bm_mets <- read_csv("output/bm_metrics_nov24.csv")
+odm_mets <- read_csv("output/odm_metrics_sep25.csv")
+bm_mets <- read_csv("output/bm_metrics_sep25.csv")
 bm_conf <- read_csv("output/bm_conf_mat_nov24.csv")
 outc_preds <- read_csv("output/extracted_outcomes_20241203.csv")
 
@@ -92,7 +92,14 @@ mets_table <- mets_plot |>
   select(metric, score, n_articles) |> 
   mutate(score = percent(round(score, 3), accuracy = 0.1)) |> 
   pivot_wider(id_cols = c(n_articles), names_from = metric, values_from = score) |> 
-  arrange(n_articles)
+  arrange(n_articles) |> 
+  left_join(select(n_arts_df, n_articles, AUROC, AUPRC), by = "n_articles") |> 
+  distinct() |>
+  mutate(
+      AUROC = percent(round(AUROC, 3), accuracy = 0.1),
+      AUPRC = percent(round(AUPRC, 3), accuracy = 0.1)
+  )
+
 
 ## Score over n articles
 n_arts_plot <- ggplot(mets_plot, aes(x = n_articles, y = score)) + 
@@ -107,7 +114,7 @@ n_arts_plot <- ggplot(mets_plot, aes(x = n_articles, y = score)) +
 
 kable(mets_table)
 kable(mets_table, "html") |> 
-  cat(file = file.path(tables_out, "n-arts_model-metrics.html"))
+  cat(file = file.path(tables_out, "n-arts_model-metrics_sep25.html"))
 
 print(n_arts_plot)
 
@@ -133,20 +140,25 @@ cross_val_tab <- cross_val_df |>
   select(fold, metric, score) |> 
   mutate(score = round(score, 3)) |> 
   pivot_wider(id_cols = fold, names_from = metric, values_from = score) |> 
-  mutate(fold = as.character(fold)) |>  
-  rename(f1 = `f1-score`)
+  rename(f1 = `f1-score`) |> 
+  left_join(select(cross_val_df, fold, AUROC, AUPRC), by = "fold") |> 
+  distinct() |> 
+  mutate(fold = as.character(fold))
 
 cross_val_tab <- cross_val_tab |> 
   bind_rows(data.frame(fold = "average",
                        precision = round(mean(cross_val_tab$precision), 3),
                        recall = round(mean(cross_val_tab$recall), 3),
-                       f1 = round(mean(cross_val_tab$f1), 3))) |>
+                       f1 = round(mean(cross_val_tab$f1), 3),
+                       AUROC = round(mean(cross_val_tab$AUROC), 3),
+                       AUPRC = round(mean(cross_val_tab$AUPRC), 3)
+                      )) |>
   mutate(across(c(-fold), ~ percent(.x, accuracy = 0.1)))
   
 
 kable(cross_val_tab)
 kable(cross_val_tab, "html") |> 
-  cat(file = file.path(tables_out, "crossval_metrics.html"))
+  cat(file = file.path(tables_out, "crossval_metrics_sep25.html"))
 ```
 
 ## Applying model
@@ -156,16 +168,20 @@ Performance metrics for final model for predicting outcome/not outcome:
 ```{r bm_preds}
 
 bm_mets_out <- bm_mets |> 
-  filter(metric %in% c('precision', 'recall', 'f1-score'), 
+  filter(metric %in% c('precision', 'recall', 'f1-score', 'AUROC', 'AUPRC'), 
          target %in% c('outcome', 'not outcome')) |> 
   select(target, metric, score) |> 
   mutate(score = percent(round(score, 3), accuracy = 0.1)) |> 
   pivot_wider(id_cols = target, names_from = metric, values_from = score) |> 
-  rename(f1 = `f1-score`)
+  rename(f1 = `f1-score`) |> 
+  mutate(
+    accuracy = bm_mets[bm_mets$metric == "accuracy", 'score']$score,
+    accuracy = percent(round(accuracy, 3), accuracy = 0.1)
+  )
 
 kable(bm_mets_out)
 kable(bm_mets_out, "html") |> 
-  cat(file = file.path(tables_out, "bm_metrics.html"))
+  cat(file = file.path(tables_out, "bm_metrics_sep25.html"))
   
 
 bm_preds <- bm_preds |> 
@@ -207,8 +223,9 @@ The table below shows the average performance for the model for predicting outco
 odm_mets_tab <- odm_mets |> 
   mutate(across(c(-eval), ~ percent(round(.x, 3), accuracy = 0.1))) 
 
-kable(odm_mets_tab)kable(odm_mets_tab, "html") |> 
-  cat(file = file.path(tables_out, "outcome-domain-model_metrics.html"))
+kable(odm_mets_tab)
+kable(odm_mets_tab, "html") |> 
+  cat(file = file.path(tables_out, "outcome-domain-model_metrics_sep25.html"))
 ```
 
 The table and figures below compare the distribution of outcome domains between the predicted and the actual.
