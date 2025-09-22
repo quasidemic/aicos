@@ -302,7 +302,7 @@ A Quarto markdown document for creating the technical report of the modelling an
 
 ### `r-scripts/potting.r`
 
-An R-script using `ggplot` to create the plot used in the article.
+An R-script using `ggplot` to create a draft version of the plot used in the article.
 
 
 
