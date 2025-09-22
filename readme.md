@@ -69,7 +69,7 @@ The pipeline consists of:
 
 ------
 
-### 3️⃣ `03_model-train-size_5-20.py`
+### 3️⃣ `03_model-train-size_X-Y.py`
 
 **Purpose**: Study *impact of training set size* on model performance. This experiment quantifies how many labeled articles are needed for good precision/recall. 
 
@@ -309,6 +309,8 @@ An R-script using `ggplot` to create the plot used in the article.
 ### `py-scripts/utils`
 
 Various utility scripts for file conversion and interactive model testing.
+
+Directory includes the scripts `final_binmodel_auroc_auprc.py` and `final_odmodel_auroc_auprc.py`, that calculates further evaluation metrics for trained SBERT models (like AUROC and AUPRC).
 
 ------
 
