@@ -60,7 +60,7 @@ p = (
 
 ## SAVE
 p.save(filename=join(plot_dir, 'bin-model_n-art_plot.png'), width=12, height=10, dpi=300)
-model_metrics_df.to_csv(join(output_dir, 'metrics_binary-model_n-art.csv'), index = False)
+model_metrics_df.to_csv(join(output_dir, 'metrics_binary-model_n-art_sep25.csv'), index = False)
 
 ## Conclusion: Use 20 articles based on precision/recall going above 90%
 
